@@ -1,11 +1,11 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
-const fs = require('fs');
 const mongodb = require('mongodb');
 const client = new mongodb.MongoClient(process.env.MONGO_URI);
 const db = client.db('gridFsEx');
 const bucket = new mongodb.GridFSBucket(db, { bucketName: 'userImgs' });
+const stream = require('stream');
 
 (async () => {
     await client.connect();
@@ -28,13 +28,9 @@ app.post('/api/v1/users', async (req, res) => {
             const imgId = (mongodb.ObjectId()).toString();
             user.imgs.push(imgId);
 
-            fs.writeFileSync(`./${imgId}.png`, image.data, { encoding: 'base64' });
-            fs.createReadStream(`./${imgId}.png`).
-                pipe(bucket.openUploadStream(imgId, {
-                    chunkSizeBytes: 10485760
-                })).on('finish', () => {
-                    fs.unlinkSync(`./${imgId}.png`)
-                });
+            stream.Readable.from(image.data).pipe(bucket.openUploadStream(imgId, {
+                chunkSizeBytes: 10485760
+            }))
         }
 
         if (req.files.img.length) {
@@ -53,7 +49,6 @@ app.post('/api/v1/users', async (req, res) => {
 
 app.post('/api/v1/userDelete/:id', async (req, res) => {
     try {
-        await client.connect();
         const user = await db.collection('gridFsEx').findOne({ _id: req.params.id });
         user.imgs.forEach(async imgName => {
             const imageId = [];
@@ -70,8 +65,7 @@ app.post('/api/v1/userDelete/:id', async (req, res) => {
 
 app.get('/api/v1/userImages', async (req, res) => {
     try {
-        const data = [];
-        await bucket.find({}).forEach(doc => data.push(doc));
+        const data = await bucket.find({}).toArray()
         res.status(201).json(data);
     } catch (error) {
         res.status(500).json({ msg: error });
@@ -80,9 +74,7 @@ app.get('/api/v1/userImages', async (req, res) => {
 
 app.get('/api/v1/userImages/:id', async (req, res) => {
     try {
-        await client.connect();
-        const data = [];
-        await bucket.find({ filename: req.params.id }).forEach(doc => data.push(doc));
+        const data = await bucket.find({ filename: req.params.id }).toArray();
         if (!data.length) return res.status(404).json({ msg: 'URL path does not exist' });
         bucket.openDownloadStreamByName(req.params.id).pipe(res);
         res.status(201);
